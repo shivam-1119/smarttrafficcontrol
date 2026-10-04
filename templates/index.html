@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Traffic Control & Real-time Vision AI</title>
+    <meta name="description" content="Real-time YOLO vehicle detection, multi-object tracking, lane-wise density calculation, and adaptive traffic signal control dashboard.">
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    
+    <!-- Lucide Icons & Chart.js -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <!-- Top Navigation Bar -->
+    <header class="navbar">
+        <div class="nav-brand">
+            <div class="brand-icon">
+                <i data-lucide="activity" class="pulse-icon"></i>
+            </div>
+            <div class="brand-text">
+                <h1>Smart Traffic Vision AI</h1>
+                <span class="badge badge-ai">YOLOv8 + Multi-Object Tracker</span>
+            </div>
+        </div>
+
+        <!-- Center System Indicators -->
+        <div class="nav-status-group">
+            <div class="status-pill">
+                <span class="status-dot live-pulse"></span>
+                <span id="ws-status-text">SYSTEM LIVE</span>
+            </div>
+            <div class="metric-pill">
+                <i data-lucide="gauge"></i>
+                <span>FPS: <strong id="hud-fps">0.0</strong></span>
+            </div>
+            <div class="metric-pill">
+                <i data-lucide="car"></i>
+                <span>Active: <strong id="hud-total-active">0</strong></span>
+            </div>
+            <div class="metric-pill">
+                <i data-lucide="layers"></i>
+                <span>Tracked: <strong id="hud-total-tracked">0</strong></span>
+            </div>
+        </div>
+
+        <!-- Top Right Actions -->
+        <div class="nav-actions">
+            <button id="btn-pause-play" class="btn btn-secondary" title="Pause / Resume Playback">
+                <i data-lucide="pause" id="icon-pause-play"></i>
+                <span id="text-pause-play">Pause</span>
+            </button>
+            <button id="btn-snapshot" class="btn btn-secondary" title="Capture Snapshot">
+                <i data-lucide="camera"></i>
+                <span>Snapshot</span>
+            </button>
+            <button id="btn-reset-counts" class="btn btn-danger-outline" title="Reset All Counts">
+                <i data-lucide="rotate-ccw"></i>
+                <span>Reset</span>
+            </button>
+            <button id="btn-open-lane-editor" class="btn btn-primary" title="Open Interactive Road Area & Lane Width Editor">
+                <i data-lucide="sliders-horizontal"></i>
+                <span>Road & Lane Customizer</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Source Selection & Control Strip -->
+    <section class="control-strip">
+        <div class="strip-item">
+            <label><i data-lucide="video"></i> Video / Camera Source:</label>
+            <div class="select-wrapper">
+                <select id="select-video-source">
+                    <option value="" disabled selected>Loading sources...</option>
+                </select>
+            </div>
+            <button id="btn-refresh-sources" class="btn btn-icon" title="Refresh Cameras">
+                <i data-lucide="refresh-cw"></i>
+            </button>
+        </div>
+
+        <div class="strip-item">
+            <label><i data-lucide="map-pin"></i> Road & Lane Preset:</label>
+            <div class="select-wrapper">
+                <select id="select-lane-preset">
+                    <option value="4_lane_highway" selected>4-Lane Full Road (Covers Left Traffic)</option>
+                    <option value="full_road_wide">Full Camera Width (100% Panorama)</option>
+                    <option value="left_traffic_focus">Left Traffic Focus (3 Lanes)</option>
+                    <option value="right_traffic_focus">Right Traffic Focus (3 Lanes)</option>
+                    <option value="urban_intersection">Urban 4-Lane Intersection</option>
+                    <option value="3_lane_express">3-Lane Express Way</option>
+                    <option value="dual_section">Dual-Section Split (2 Lanes)</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="strip-item road-quick-strip">
+            <label><i data-lucide="maximize-2"></i> Quick Road Width:</label>
+            <div class="road-quick-buttons">
+                <button id="btn-strip-left-traffic" class="btn btn-outline btn-sm" title="Expand road area to cover left traffic (cars, trucks)">
+                    <i data-lucide="truck"></i> Cover Left Traffic
+                </button>
+                <button id="btn-strip-full-road" class="btn btn-outline btn-sm" title="Expand road area to 100% full width">
+                    <i data-lucide="maximize-2"></i> 100% Width
+                </button>
+            </div>
+        </div>
+
+        <div class="strip-item upload-box">
+            <label><i data-lucide="upload-cloud"></i> Upload Video:</label>
+            <input type="file" id="input-video-upload" accept=".mp4,.avi,.mov,.mkv" style="display:none;">
+            <button class="btn btn-outline btn-sm" onclick="document.getElementById('input-video-upload').click()">
+                <span>Choose File (.mp4)</span>
+            </button>
+            <span id="upload-status" class="status-msg"></span>
+        </div>
+
+        <div class="strip-item slider-box">
+            <label><i data-lucide="sliders"></i> YOLO Confidence: <strong id="label-conf-val">35%</strong></label>
+            <input type="range" id="slider-confidence" min="10" max="90" value="35" step="5">
+        </div>
+    </section>
+
+    <!-- Main Dashboard Workspace -->
+    <main class="dashboard-grid">
+        
+        <!-- Left Column: Live Video Feed & Overlays Panel -->
+        <section class="panel video-panel">
+            <div class="panel-header">
+                <div class="title-with-icon">
+                    <i data-lucide="tv"></i>
+                    <h2>Live Vision & Tracking Stream</h2>
+                </div>
+                <div class="panel-tags">
+                    <span id="tag-current-source" class="tag tag-source">Urban Intersection</span>
+                    <span id="tag-res" class="tag">1280x720</span>
+                </div>
+            </div>
+
+            <!-- Video Player Box with Canvas Layer -->
+            <div class="video-container" id="video-container">
+                <img id="live-stream-img" src="/video_feed" alt="Live YOLO Traffic Stream" crossorigin="anonymous">
+                <canvas id="lane-canvas-overlay"></canvas>
+
+                <!-- Floating Stream Controls -->
+                <div class="stream-floating-toolbar">
+                    <button class="tool-btn active" data-overlay="show_boxes" title="Toggle Bounding Boxes">
+                        <i data-lucide="square"></i> BBoxes
+                    </button>
+                    <button class="tool-btn active" data-overlay="show_labels" title="Toggle Class Labels">
+                        <i data-lucide="tag"></i> Labels
+                    </button>
+                    <button class="tool-btn active" data-overlay="show_ids" title="Toggle Track IDs">
+                        <i data-lucide="hash"></i> IDs
+                    </button>
+                    <button class="tool-btn active" data-overlay="show_speed" title="Toggle Velocity/Speed">
+                        <i data-lucide="zap"></i> Speed
+                    </button>
+                    <button class="tool-btn active" data-overlay="show_trails" title="Toggle Motion Trails">
+                        <i data-lucide="git-commit"></i> Trails
+                    </button>
+                    <button class="tool-btn active" data-overlay="show_lanes" title="Toggle Lane Polygons">
+                        <i data-lucide="shield"></i> Lanes
+                    </button>
+                    <button class="tool-btn active" data-overlay="show_count_lines" title="Toggle Counting Lines">
+                        <i data-lucide="minus"></i> Triggers
+                    </button>
+                    <button class="tool-btn active" data-overlay="show_density_hud" title="Toggle Top HUD">
+                        <i data-lucide="layout"></i> HUD
+                    </button>
+                    <button class="tool-btn highlight" id="btn-toolbar-road-editor" title="Open Road Area & Lane Width Editor">
+                        <i data-lucide="sliders-horizontal"></i> Customize Road
+                    </button>
+                </div>
+            </div>
+
+            <!-- Interactive Lane ROI & Width Configuration Control Center (Expandable) -->
+            <div id="lane-editor-drawer" class="lane-editor-drawer hidden">
+                <div class="drawer-header">
+                    <div class="drawer-title-group">
+                        <h3><i data-lucide="sliders-horizontal"></i> Road Area & Lane Width Customizer</h3>
+                        <p>Drag the 4 corner pins on the video canvas (or use the sliders below) to freely define the road width, angle, and lanes.</p>
+                    </div>
+                    <div class="drawer-buttons">
+                        <button id="btn-auto-left-traffic" class="btn btn-outline btn-sm" title="Expand road area to cover left traffic (cars, trucks)">
+                            <i data-lucide="truck"></i> Include Left Traffic
+                        </button>
+                        <button id="btn-full-road" class="btn btn-outline btn-sm" title="Expand road area to cover entire road">
+                            <i data-lucide="maximize-2"></i> Full Road Width
+                        </button>
+                        <button id="btn-equalize-lanes" class="btn btn-secondary btn-sm" title="Make all lane widths equal">
+                            <i data-lucide="distribute-horizontal"></i> Equalize Widths
+                        </button>
+                        <button id="btn-save-custom-lanes" class="btn btn-success btn-sm">
+                            <i data-lucide="check"></i> Save & Apply
+                        </button>
+                        <button id="btn-close-lane-editor" class="btn btn-secondary btn-sm">Close</button>
+                    </div>
+                </div>
+
+                <!-- Lane Adjuster Controls Grid -->
+                <div class="lane-controls-grid">
+                    
+                    <!-- Section 1: Number of Active Lanes -->
+                    <div class="control-box">
+                        <div class="control-box-header">
+                            <label><i data-lucide="layers"></i> Total Lanes:</label>
+                            <span id="label-lane-count" class="badge-num">4 Lanes</span>
+                        </div>
+                        <div class="lane-count-buttons" id="lane-count-btn-group">
+                            <button class="btn-count" data-count="1">1</button>
+                            <button class="btn-count" data-count="2">2</button>
+                            <button class="btn-count" data-count="3">3</button>
+                            <button class="btn-count active" data-count="4">4</button>
+                            <button class="btn-count" data-count="5">5</button>
+                            <button class="btn-count" data-count="6">6</button>
+                        </div>
+                    </div>
+
+                    <!-- Section 2: Bottom Road Boundaries (Foreground) -->
+                    <div class="control-box">
+                        <div class="control-box-header">
+                            <label><i data-lucide="move-horizontal"></i> Bottom Road (Foreground):</label>
+                            <span id="label-road-x-span" class="badge-num">5% - 75%</span>
+                        </div>
+                        <div class="slider-row">
+                            <small>Bottom-Left:</small>
+                            <input type="range" id="slider-bot-left" min="0" max="90" value="5" step="1">
+                            <span id="val-bot-left" class="slider-val">5%</span>
+                        </div>
+                        <div class="slider-row">
+                            <small>Bottom-Right:</small>
+                            <input type="range" id="slider-bot-right" min="10" max="100" value="75" step="1">
+                            <span id="val-bot-right" class="slider-val">75%</span>
+                        </div>
+                    </div>
+
+                    <!-- Section 3: Top Road Boundaries (Horizon Perspective) -->
+                    <div class="control-box">
+                        <div class="control-box-header">
+                            <label><i data-lucide="move-horizontal"></i> Top Road (Horizon):</label>
+                            <span id="label-top-x-span" class="badge-num">28% - 65%</span>
+                        </div>
+                        <div class="slider-row">
+                            <small>Top-Left:</small>
+                            <input type="range" id="slider-top-left" min="0" max="90" value="28" step="1">
+                            <span id="val-top-left" class="slider-val">28%</span>
+                        </div>
+                        <div class="slider-row">
+                            <small>Top-Right:</small>
+                            <input type="range" id="slider-top-right" min="10" max="100" value="65" step="1">
+                            <span id="val-top-right" class="slider-val">65%</span>
+                        </div>
+                    </div>
+
+                    <!-- Section 4: Vertical Heights & Trigger Line -->
+                    <div class="control-box">
+                        <div class="control-box-header">
+                            <label><i data-lucide="move-vertical"></i> Vertical Extents (Y):</label>
+                            <span id="label-road-y-span" class="badge-num">5% - 95%</span>
+                        </div>
+                        <div class="slider-row">
+                            <small>Top Horizon:</small>
+                            <input type="range" id="slider-road-top" min="0" max="60" value="5" step="1">
+                            <span id="val-road-top" class="slider-val">5%</span>
+                        </div>
+                        <div class="slider-row">
+                            <small>Bottom Edge:</small>
+                            <input type="range" id="slider-road-bottom" min="50" max="100" value="95" step="1">
+                            <span id="val-road-bottom" class="slider-val">95%</span>
+                        </div>
+                        <div class="slider-row">
+                            <small>Trigger Line:</small>
+                            <input type="range" id="slider-trigger-y" min="10" max="90" value="62" step="1">
+                            <span id="val-trigger-y" class="slider-val">62%</span>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- Section 5: Individual Lane Width Sliders & Quick Scale -->
+                <div class="individual-lanes-adjuster">
+                    <div class="individual-lanes-header">
+                        <div class="title-with-icon">
+                            <i data-lucide="columns"></i>
+                            <label>Individual Lane Width Distribution:</label>
+                        </div>
+                        <div class="quick-align-actions">
+                            <button id="btn-shift-left" class="btn btn-outline btn-sm" title="Shift entire road left">◀ Shift Left</button>
+                            <button id="btn-shift-right" class="btn btn-outline btn-sm" title="Shift entire road right">Shift Right ▶</button>
+                            <button id="btn-expand-width" class="btn btn-outline btn-sm" title="Widen road">⤢ Widen Road</button>
+                            <button id="btn-shrink-width" class="btn btn-outline btn-sm" title="Narrow road">⤡ Narrow Road</button>
+                        </div>
+                    </div>
+                    <div class="lane-widths-sliders-container" id="lane-widths-sliders-container">
+                        <!-- Populated dynamically via JS -->
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- Right Column: Traffic Density, Adaptive Signals & Real-Time Lane Cards -->
+        <aside class="panel side-panel">
+            
+            <!-- Traffic Density Gauge Card -->
+            <div class="density-gauge-card">
+                <div class="card-header-flex">
+                    <div class="title-sub">
+                        <span class="label-upper">OVERALL TRAFFIC DENSITY</span>
+                        <h3 id="overall-density-category" class="density-title text-low">LOW DENSITY</h3>
+                    </div>
+                    <div class="density-score-circle" id="density-circle-wrapper">
+                        <span id="overall-density-score">24%</span>
+                        <small>INDEX</small>
+                    </div>
+                </div>
+                
+                <!-- Density Visual Meter Bar -->
+                <div class="density-progress-track">
+                    <div class="density-progress-fill" id="density-bar-fill" style="width: 24%; background-color: #10b981;"></div>
+                </div>
+                <div class="density-scale-labels">
+                    <span class="scale-low">Low (0-35%)</span>
+                    <span class="scale-med">Medium (36-70%)</span>
+                    <span class="scale-high">High (71-88%)</span>
+                    <span class="scale-severe">Severe (89%+)</span>
+                </div>
+
+                <div id="congestion-alert-box" class="congestion-alert hidden">
+                    <i data-lucide="alert-triangle"></i>
+                    <span><strong>CONGESTION DETECTED:</strong> Dynamic green wave clearance recommended!</span>
+                </div>
+            </div>
+
+            <!-- Adaptive Smart Traffic Light Controller Section -->
+            <div class="signals-panel">
+                <div class="signals-header">
+                    <div class="title-with-icon">
+                        <i data-lucide="traffic-cone"></i>
+                        <h3>Adaptive Traffic Signals</h3>
+                    </div>
+                    <div class="signal-timer-badge">
+                        <i data-lucide="clock"></i>
+                        <span>Phase: <strong id="signal-remaining-timer">20s</strong></span>
+                    </div>
+                </div>
+
+                <!-- Dynamic Lanes Traffic Lights Grid -->
+                <div class="lane-signals-grid" id="lane-signals-container">
+                    <!-- Populated dynamically via JS -->
+                </div>
+            </div>
+
+            <!-- Real-time Lane Metrics Cards -->
+            <div class="lanes-container">
+                <div class="lanes-header">
+                    <div class="title-with-icon">
+                        <i data-lucide="layers"></i>
+                        <h3>Lane-wise Analytics & Occupancy</h3>
+                    </div>
+                    <span class="lanes-count-badge" id="total-lanes-count">4 Lanes</span>
+                </div>
+
+                <div class="lanes-grid" id="lanes-grid-container">
+                    <!-- Populated dynamically via JS -->
+                </div>
+            </div>
+
+        </aside>
+
+    </main>
+
+    <!-- Bottom Analytics & Object Detections Grid -->
+    <section class="bottom-analytics-grid">
+        
+        <!-- Chart 1: Real-time Traffic Density Trend -->
+        <div class="panel chart-panel">
+            <div class="panel-header">
+                <div class="title-with-icon">
+                    <i data-lucide="trending-up"></i>
+                    <h3>Traffic Flow & Density Trend</h3>
+                </div>
+                <span class="tag tag-live">Live 60s Buffer</span>
+            </div>
+            <div class="chart-container">
+                <canvas id="densityChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Chart 2: Vehicle Class Breakdown -->
+        <div class="panel chart-panel">
+            <div class="panel-header">
+                <div class="title-with-icon">
+                    <i data-lucide="pie-chart"></i>
+                    <h3>Vehicle Classification Mix</h3>
+                </div>
+                <span class="tag">YOLO Objects</span>
+            </div>
+            <div class="chart-container">
+                <canvas id="classDistChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Real-time Object Tracking Coordinates & Detection Log Table -->
+        <div class="panel table-panel">
+            <div class="panel-header">
+                <div class="title-with-icon">
+                    <i data-lucide="list"></i>
+                    <h3>Live Vehicle Detections & Spatial Coordinates</h3>
+                </div>
+                <div class="table-actions">
+                    <input type="text" id="table-search-input" placeholder="Filter by ID, Class or Lane..." class="search-input">
+                    <button id="btn-export-csv" class="btn btn-outline btn-sm">
+                        <i data-lucide="download"></i> Export CSV
+                    </button>
+                    <button id="btn-export-json" class="btn btn-outline btn-sm">
+                        <i data-lucide="file-text"></i> JSON
+                    </button>
+                </div>
+            </div>
+
+            <div class="table-wrapper">
+                <table class="data-table" id="detections-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Track ID</th>
+                            <th>Class</th>
+                            <th>Confidence</th>
+                            <th>Lane ROI</th>
+                            <th>Speed</th>
+                            <th>Heading</th>
+                            <th>BBox [X, Y, W, H]</th>
+                        </tr>
+                    </thead>
+                    <tbody id="detections-table-body">
+                        <tr>
+                            <td colspan="8" class="text-center text-muted">Awaiting vehicle detections...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </section>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+        <div class="footer-left">
+            <span>Smart Traffic Vision AI System &bull; Powered by YOLOv8, OpenCV & FastAPI</span>
+        </div>
+        <div class="footer-right">
+            <span>Real-time Multi-Lane Detection & Dynamic Signal Optimization</span>
+        </div>
+    </footer>
+
+    <!-- Application JavaScript -->
+    <script src="/static/js/lane_editor.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
